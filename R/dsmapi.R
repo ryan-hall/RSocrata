@@ -5,21 +5,19 @@
 
 # library('httr')       # for access to the HTTP header
 # library('jsonlite')   # for parsing data types from Socrata
-# library('mime')       # for guessing mime type
-# library('plyr')       # for parsing JSON files
 
-#' Open a new revision on a dataset
+#' Revision: Open a new revision on a dataset
 #'
 #' This function opens a new revision, or draft, on an existing dataset on a Socrata domain.
 #' This is the first step in updating or replacing a dataset on Socrata with new data. 
 #'
-#' @param dataset_id The dataset's unique ID, or four by four, located at the end of a dataset's URL 
-#' @param action_type One of "update", "replace", or "delete", depending on how you want to update the dataset
-#' @param domain_url The Socrata domain URL, not including https://
-#' @param email Socrata username, or Socrata API Key
-#' @param password Socrata password, or Socrata API Secret
+#' @param dataset_id character vector. The dataset's unique ID, or four by four, located at the end of a dataset's URL 
+#' @param action_type character vector. One of "update", "replace", or "delete", depending on how you want to update the dataset.
+#' @param domain_url character vector. The Socrata domain URL, including scheme and hostname, i.e. https://data.seattle.gov
+#' @param email character vector. Socrata username, or Socrata API Key
+#' @param password character vector. Socrata password, or Socrata API Secret
 #'
-#' @return This function returns the response body from the httr call to the Socrata Data Management API
+#' @return This function returns the response body from the httr call to the Socrata Data Management API revision endpoint
 #'
 #' @note More information on Data Management API available at https://socratapublishing.docs.apiary.io/
 #'
@@ -27,19 +25,16 @@
 #' \dontrun{
 #' open_revision()
 #' }
-#' @importFrom httr POST add_headers authenticate user_agent parse_url content
+#' @importFrom httr POST add_headers authenticate user_agent parse_url content stop_for_status
 #' @importFrom jsonlite fromJSON
 #'
 #' @export
-## use fetch_user_agent()
-## use isFourByFour()
 open_revision <- function(dataset_id, action_type, domain_url, email, password) {
-  domain <- httr::parse_url(domain_url)
-  if(is.null(domain$scheme) | is.null(domain$hostname) | is.null(domain$path))
-    stop(domain_url, " does not appear to be a valid URL.")
-  
   dataset_id <- as.character(dataset_id)
-  open_revision_endpoint <- paste0(domain$scheme, '://', domain$hostname, '/api/publishing/v1/revision/', dataset_id)
+  if(!isFourByFour(dataset_id))
+    stop(dataset_id, " does not appear to be of valid Socrata dataset identifier format.")
+  
+  open_revision_endpoint <- paste0(domain_url, '/api/publishing/v1/revision/', dataset_id)
   
   if(!any(c(action_type == "update", action_type == "replace", action_type == "delete")))
     stop(action_type, " is not one of 'update', 'replace', or 'delete'.")
@@ -61,30 +56,30 @@ open_revision <- function(dataset_id, action_type, domain_url, email, password) 
   }
 }
 
-#' Specify details about your data source within the revision
+#' Source: Specify details about your data source
 #'
-#' Within a revision, a Source describes pertinent details about your data source, like a filename.
-#' This function passes chosen options to the Source endpoint of your revision, and is the second step in
+#' Within a revision, a Source describes pertinent details about your data source, like whether or not it can be parsed.
+#' This function passes options to the Source endpoint of your revision, and is the second step in
 #' running a dataset update. 
 #'
-#' @param dataset_id The dataset's unique ID, or four by four, located at the end of a dataset's URL 
-#' @param source_type One of "upload" or "url", specifying where the data for the update will come from. Default
-#'     is 'upload'.
+#' @param revision_response_object The response from the API from the open_revision function.  
+#' @param source_type Default is "upload". Only uploads supported at this time. 
 #' @param source_parse 'true' or 'false' for whether the source is of a data type Socrata can parse, including
-#'     csv, tsv, xls, OpenXML, GeoJSON, KML, KMZ, Shapefile. Default is 'true'.
-#' @param domain_url The Socrata domain URL, not including https://
+#'     csv, tsv, xls, OpenXML, GeoJSON, KML, KMZ, Shapefile. Default is 'true'. 
+#' @param filename The name of the file you are uploading. 
+#' @param domain_url The Socrata domain URL, including 'https://'
 #' @param email Socrata username, or Socrata API Key
 #' @param password Socrata password, or Socrata API Secret
 #'
-#' @return This function returns the response body from the httr call to the Socrata Data Management API
+#' @return This function returns the response body from the httr call to the Socrata Data Management API's source endpoint
 #'
 #' @note More information on Data Management API available at https://socratapublishing.docs.apiary.io/
 #'
 #' @examples
 #' \dontrun{
-#' open_revision()
+#' create_source()
 #' }
-#' @importFrom httr POST add_headers authenticate upload_file
+#' @importFrom httr POST add_headers authenticate upload_file user_agent content stop_for_status
 #' @importFrom jsonlite fromJSON
 #'
 #' @export
@@ -112,7 +107,29 @@ create_source <- function(revision_response_object, filename, source_type = "upl
 }
 
 
-
+#' Upload: Upload a data source to the Socrata revision
+#'
+#' This function supports streaming a data file from a local filepath to the Socrata revision.
+#' After the data is uploaded to the Socrata revision, it undergoes a validation step. 
+#'
+#' @param create_source_response_object list. The response body from the create_source function.   
+#' @param filepath_to_data character vector. Local filepath to the data. 
+#' @param domain_url The Socrata domain URL, including 'https://'
+#' @param email Socrata username, or Socrata API Key
+#' @param password Socrata password, or Socrata API Secret
+#'
+#' @return This function returns the response body from the httr call to the Socrata Data Management API upload endpoint.
+#'
+#' @note More information on Data Management API available at https://socratapublishing.docs.apiary.io/
+#'
+#' @examples
+#' \dontrun{
+#' upload_to_source()
+#' }
+#' @importFrom httr POST GET add_headers authenticate user_agent content upload_file stop_for_status
+#' @importFrom jsonlite fromJSON
+#'
+#' @export
 upload_to_source <- function(create_source_response_object, filepath_to_data, domain_url, email, password) {
   upload_data_url <- paste0(domain_url, create_source_response_object$links$bytes)
   
@@ -163,7 +180,28 @@ upload_to_source <- function(create_source_response_object, filepath_to_data, do
 }
 
 
-
+#' Apply: Apply, or publish, revision
+#'
+#' This function applies the revision and publishes the data update, once the 
+#' data has completed its data validation and transformation steps.
+#'
+#' @param revision_response_object list. The response body from the open_revision function.
+#' @param domain_url The Socrata domain URL, including 'https://'
+#' @param email Socrata username, or Socrata API Key
+#' @param password Socrata password, or Socrata API Secret
+#'
+#' @return This function returns the response body from the httr call to the Socrata Data Management API apply endpoint.
+#'
+#' @note More information on Data Management API available at https://socratapublishing.docs.apiary.io/
+#'
+#' @examples
+#' \dontrun{
+#' apply_revision()
+#' }
+#' @importFrom httr PUT add_headers authenticate user_agent content stop_for_status
+#' @importFrom jsonlite fromJSON
+#'
+#' @export
 apply_revision <- function(revision_response_object, domain_url, email, password) {
   apply_revision_url <- paste0(domain_url, revision_response_object$links$apply)
   apply_revision_json <- paste0('{"resource": {"id":',revision_response_object$resource$revision_seq,'}}')
@@ -184,34 +222,44 @@ apply_revision <- function(revision_response_object, domain_url, email, password
 }
 
 
-
-update.socrata <- function(dataset_id, 
-                           filename, 
+#' Update a Socrata Dataset with the Data Management API
+#'
+#' In one step, complete the steps of opening a draft, uploading data, and publishing your draft. 
+#' Set the 'action_type' argument to "update", "replace", or "delete". 
+#'
+#' @param dataset_id character vector. The dataset's unique ID, or four by four, located at the end of a dataset's URL 
+#' @param filepath_to_data character vector. Local filepath to the data. 
+#' @param action_type character vector. One of "update", "replace", or "delete", depending on how you want to update the dataset.
+#' @param source_type Default is "upload". Only uploads supported at this time. 
+#' @param source_parse 'true' or 'false' for whether the source is of a data type Socrata can parse, including
+#'     csv, tsv, xls, OpenXML, GeoJSON, KML, KMZ, Shapefile. Default is 'true'. 
+#' @param domain_url character vector. The Socrata domain URL, including scheme and hostname, i.e. https://data.seattle.gov
+#' @param email character vector. Socrata username, or Socrata API Key
+#' @param password character vector. Socrata password, or Socrata API Secret
+#'
+#' @return This function returns the response body from the httr call to the Socrata Data Management API apply endpoint.
+#'
+#' @note More information on Data Management API available at https://socratapublishing.docs.apiary.io/
+#'
+#' @examples
+#' \dontrun{
+#' update_socrata()
+#' }
+#' @importFrom httr PUT POST GET add_headers authenticate user_agent content stop_for_status upload_file
+#' @importFrom jsonlite fromJSON
+#'
+#' @export
+update_socrata <- function(dataset_id, 
                            filepath_to_data, 
+                           action_type,
                            source_type = "upload", 
                            source_parse = "true", 
                            domain_url, 
                            email, 
                            password) {
   
-  open_revision_socrata <- open_revision(dataset_id, "update", domain_url, email, password)
-  create_source_socrata <- create_source(open_revision_socrata, filename, source_type, source_parse, domain_url, email, password)
-  upload_to_source_socrata <- upload_to_source(create_source_socrata, filepath_to_data, domain_url, email, password)
-  apply_revision_socrata <- apply_revision(open_revision_socrata, domain_url, email, password)
-  
-}
-
-replace.socrata <- function(dataset_id, 
-                            filename, 
-                            filepath_to_data, 
-                            source_type = "upload", 
-                            source_parse = "true", 
-                            domain_url, 
-                            email, 
-                            password) {
-  
-  open_revision_socrata <- open_revision(dataset_id, "replace", domain_url, email, password)
-  create_source_socrata <- create_source(open_revision_socrata, filename, source_type, source_parse, domain_url, email, password)
+  open_revision_socrata <- open_revision(dataset_id, action_type, domain_url, email, password)
+  create_source_socrata <- create_source(open_revision_socrata, filepath_to_data, source_type, source_parse, domain_url, email, password)
   upload_to_source_socrata <- upload_to_source(create_source_socrata, filepath_to_data, domain_url, email, password)
   apply_revision_socrata <- apply_revision(open_revision_socrata, domain_url, email, password)
   
