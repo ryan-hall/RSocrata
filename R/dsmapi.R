@@ -1,4 +1,4 @@
-# Write data to Socrata datesets with the Data Management API
+# Write data to Socrata datasets with the Data Management API
 # 
 # Author: Ryan Hall 2019-12-10
 ###############################################################################
@@ -109,11 +109,11 @@ create_source <- function(revision_response_object, filename, source_type = "upl
 
 #' Upload: Upload a data source to the Socrata revision
 #'
-#' This function supports streaming a data file from a local filepath to the Socrata revision.
+#' This function supports streaming a comma separated values (csv) data file from a local filepath to the Socrata revision.
 #' After the data is uploaded to the Socrata revision, it undergoes a validation step. 
 #'
 #' @param create_source_response_object list. The response body from the create_source function.   
-#' @param filepath_to_data character vector. Local filepath to the data. 
+#' @param filepath_to_data character vector. Local filepath to a csv file.  
 #' @param domain_url The Socrata domain URL, including 'https://'
 #' @param email Socrata username, or Socrata API Key
 #' @param password Socrata password, or Socrata API Secret
@@ -132,6 +132,9 @@ create_source <- function(revision_response_object, filename, source_type = "upl
 #' @export
 upload_to_source <- function(create_source_response_object, filepath_to_data, domain_url, email, password) {
   upload_data_url <- paste0(domain_url, create_source_response_object$links$bytes)
+  
+  if(regexpr(".*\\.csv$", filepath_to_data) == -1)
+    stop(filepath_to_data, " does not appear to be a csv file.")
   
   ## If the file is a csv:
   data_for_upload <- httr::upload_file(filepath_to_data)
@@ -262,6 +265,6 @@ update_socrata <- function(dataset_id,
   create_source_socrata <- create_source(open_revision_socrata, filepath_to_data, source_type, source_parse, domain_url, email, password)
   upload_to_source_socrata <- upload_to_source(create_source_socrata, filepath_to_data, domain_url, email, password)
   apply_revision_socrata <- apply_revision(open_revision_socrata, domain_url, email, password)
-  
+  return(apply_revision_socrata)
 }
 
