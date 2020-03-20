@@ -185,6 +185,7 @@ upload_to_source <- function(create_source_response_object, filepath_to_data,
     poll_for_status <- poll_for_status + 1
     
     if (!is.null(upload_data_response$resource$failed_at)) {
+      upload_data_response
       stop("Upload failed. Check upload response.")
     } else if (!is.null(upload_data_response$resource$finished_at)){
       message("Upload finished.")
@@ -250,7 +251,8 @@ apply_revision <- function(revision_response_object, domain, email, password) {
     message("Revision applied. Socrata is processing the update.")
   } else {
     message("Revision failed to apply. Check the apply_revision_response for details.")
-    stop_for_status(apply_revision_response$status_code)
+    apply_revision_response <- jsonlite::fromJSON(httr::content(apply_revision_response,as = "text",type = "application/json", encoding = "utf-8"))
+    return(apply_revision_response)
   }
 }
 
