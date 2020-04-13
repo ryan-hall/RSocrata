@@ -6,6 +6,59 @@
 # library('httr')       # for access to the HTTP header
 # library('jsonlite')   # for parsing data types from Socrata
 
+#' Validate domain name provided
+#'
+#' @param domain a character string. The domain name of the Socrata site. 
+#' @return a valid domain name for subsequent functions, with no scheme or path
+#' @export
+#'
+#' @examples
+validate_domain <- function(domain) {
+  domain <- casefold(domain)
+  domain_parse <- httr::parse_url(domain)
+  
+  if(!is.null(domain_parse$hostname)) {
+    domain_valid <- domain_parse$hostname
+  } else if(is.null(domain_parse$scheme) & is.null(domain_parse$host_name) &
+            !is.null(domain_parse$path)) {
+    domain_valid <- domain_parse$path
+  } else if(is.null(domain_parse$scheme) & is.null(domain_parse$host_name) &
+            is.null(domain_parse$path)) {
+    stop(domain, " does not appear to be a valid domain name")
+  }
+  
+  remove_path <- httr::parse_url(paste0("https://", domain_valid))
+  domain_valid <- remove_path$hostname
+  
+  return(domain_valid)
+}
+
+#' Validate Source to send to Socrata
+#'
+#' @param source a data.frame object or filepath to a local csv
+#' @return logical. Is the provided input a valid data.frame object or file?
+#' @export
+#'
+#' @examples
+validate_source <- function(source_for_socrata) {
+  
+  if(!is.data.frame(source_for_socrata) & !is.character(source_for_socrata)) {
+    return(FALSE)
+  }
+  
+  if (is.data.frame(source_for_socrata)) {
+    return(TRUE)
+  }
+  
+  if (is.character(source_for_socrata)) {
+    if(grepl("\\.csv$", source_for_socrata)) {
+      return(TRUE)
+    } else {
+      return(FALSE)
+    }
+  }
+}
+
 #' Revision: Open a new revision on a dataset
 #'
 #' This function opens a new revision, or draft, on an existing dataset on a 
@@ -37,15 +90,21 @@
 #'
 #' @export
 open_revision <- function(dataset_id, action_type, domain, email, password) {
-  dataset_id <- as.character(dataset_id)
+  ## Validate inputs. If anything doesn't look right, don't open a revision. 
+  dataset_id <- casefold(as.character(dataset_id))
   
   if(!isFourByFour(dataset_id))
     stop(dataset_id, " does not appear to be of valid Socrata dataset identifier format.")
   
-  open_revision_endpoint <- paste0('https://', domain, '/api/publishing/v1/revision/', dataset_id)
-  
+  action_type <- casefold(action_type)
   if(!any(c(action_type == "update", action_type == "replace", action_type == "delete")))
     stop(action_type, " is not one of 'update', 'replace', or 'delete'.")
+  
+  domain <- validate_domain(domain)
+  
+  open_revision_endpoint <- paste0('https://', domain, '/api/publishing/v1/revision/', dataset_id)
+  
+ 
   open_revision_json <- paste0('{"action": {"type":"', action_type,'"}}')
   
   open_revision_response <- POST(open_revision_endpoint,
@@ -56,10 +115,10 @@ open_revision <- function(dataset_id, action_type, domain, email, password) {
   )
   
   if(open_revision_response$status_code == '201') {
-    message("Opened new revision on dataset ", dataset_id)
+    message(dataset_id, " - Opened new revision on dataset ", dataset_id)
     open_revision_response_body <- jsonlite::fromJSON(httr::content(open_revision_response, as = "text", type = "application/json", encoding = "utf-8")) 
   } else {
-    message("Failed to open revision with status code ", open_revision_response$status_code)
+    message(dataset_id, " - Failed to open revision with status code ", open_revision_response$status_code)
     stop_for_status(open_revision_response$status_code)
   }
 }
@@ -96,13 +155,14 @@ open_revision <- function(dataset_id, action_type, domain, email, password) {
 #' @importFrom jsonlite fromJSON
 #'
 #' @export
-create_source <- function(revision_response_object, filename, 
+create_source <- function(revision_response_object, 
                           source_type = "upload", source_parse = "true", 
                           domain, email, password) {
   
-  source_json_type <- paste0('{"type":"',source_type,'", "filename":"',filename,'"}')
+  source_json_type <- paste0('{"type":"',source_type,'", "filename":"socrata_upload_temp.csv"}')
   source_json_parse <- paste0('{"parse_source":"',source_parse,'"}')
-  source_json <- paste0('{"source_type":',source_json_type,', "parse_options":',source_json_parse,'}')
+  source_json <- paste0('{"source_type":',source_json_type,', "parse_options":',
+                        source_json_parse,'}')
   
   create_source_url <- paste0(domain, revision_response_object$links$create_source)
   
@@ -115,7 +175,10 @@ create_source <- function(revision_response_object, filename,
   
   if (create_source_response$status_code == "201") {
     message("Created source for update to ", revision_response_object$resource$fourfour)
-    create_source_response <- jsonlite::fromJSON(httr::content(create_source_response, as = "text", type = "application/json", encoding = "utf-8"))
+    create_source_response <- jsonlite::fromJSON(httr::content(create_source_response, 
+                                                               as = "text", 
+                                                               type = "application/json", 
+                                                               encoding = "utf-8"))
   } else {
     message("Failed to create source with status code ",create_source_response$status_code)
     stop_for_status(create_source_response$status_code)
@@ -137,6 +200,8 @@ create_source <- function(revision_response_object, filename,
 #' @param domain The Socrata domain URL, not including 'https://'
 #' @param email Socrata username, or Socrata API Key
 #' @param password Socrata password, or Socrata API Secret
+#' @param status_checks an integer. Number of time to check for Socrata to
+#' have finished processing the upload, roughly equivalent to seconds.
 #'
 #' @return This function returns the response body from the httr call to the 
 #' Socrata Data Management API upload endpoint.
@@ -153,29 +218,67 @@ create_source <- function(revision_response_object, filename,
 #'
 #' @export
 upload_to_source <- function(create_source_response_object, filepath_to_data, 
-                             domain, email, password) {
+                             domain, email, password, status_checks = 100) {
   
   upload_data_url <- paste0('https://', domain, create_source_response_object$links$bytes)
   
-  if(regexpr(".*\\.csv$", filepath_to_data) == -1)
-    stop(filepath_to_data, " does not appear to be a csv file.")
+  ## Is the data a data frame or a filepath?
+  # if(exists(deparse(substitute(filepath_to_data)))) {
+  #   
+  #   if(inherits(filepath_to_data, "data.frame")){
+  #     data_for_upload <- serialize(filepath_to_data, connection = NULL, ascii = FALSE)
+  #     ## is there something needed here for chunking/handling large data.frames?
+  #     
+  #     upload_headers <- httr::add_headers("Content-Type" = "application/octet-stream")
+  #     
+  #   } else if((file.access(filepath_to_data, mode = 4)) == 0) {
+  #     if(regexpr(".*\\.csv$", filepath_to_data) == 0) {
+  #       data_for_upload <- httr::upload_file(filepath_to_data)
+  #       upload_headers <- httr::add_headers("Content-Type" = "text/csv")
+  #       
+  #     } else if(regexpr(".*\\.csv$", filepath_to_data) == -1) {
+  #       stop(filepath_to_data, " does not appear to be a csv file.")
+  #     } 
+  #   } else if((file.access(filepath_to_data, mode = 4)) == -1) {
+  #     stop("The file ", filepath_to_data, " does not appear to exist or be accessible")
+  #   } else if(!inherits(filepath_to_data, "data.frame")) {
+  #     stop("The R object ", filepath_to_data, " does not appear to be a data.frame")
+  #   }
+  # } else if(!exists(deparse(substitute(filepath_to_data)))) {
+  #   stop(filepath_to_data, " does not appear to exist?")
+  # }
   
-  ## If the file is a csv:
-  data_for_upload <- httr::upload_file(filepath_to_data)
+  if(!is.data.frame(filepath_to_data) & !is.character(filepath_to_data)) {
+    stop(filepath_to_data, " does not appear to be a data.frame or filepath")
+  }
+  
+  if (is.data.frame(filepath_to_data)) {
+    temp_file <- tempfile("socrata_upload_temp.csv")
+    data.table::fwrite(filepath_to_data, temp_file)
+    data_for_upload <- httr::upload_file(temp_file)
+  }
+  
+  if (is.character(filepath_to_data)) {
+    data_for_upload <- httr::upload_file(filepath_to_data)
+  }
   
   ## the body of the post is the new data
   upload_data_response <- httr::POST(upload_data_url,
                                      body = data_for_upload,
                                      httr::add_headers("Content-Type" = "text/csv"),
-                                     httr::authenticate(email, password, type = "basic"),
+                                     httr::authenticate(email, password, 
+                                                        type = "basic"),
                                      httr::user_agent(fetch_user_agent())
                                      )
   
   if (upload_data_response$status_code == "200") {
     message("Uploading data to draft.")
-    upload_data_response <- jsonlite::fromJSON(httr::content(upload_data_response,as = "text",type = "application/json", encoding = "utf-8"))
+    upload_data_response <- jsonlite::fromJSON(httr::content(upload_data_response,as = "text",
+                                                             type = "application/json", 
+                                                             encoding = "utf-8"))
   } else {
-    message("Failed to upload data to source with status code ",upload_data_response$status_code)
+    message("Failed to upload data to source with status code ",
+            upload_data_response$status_code)
     stop_for_status(upload_data_response$status_code)
   }
   
@@ -190,16 +293,22 @@ upload_to_source <- function(create_source_response_object, filepath_to_data,
     } else if (!is.null(upload_data_response$resource$finished_at)){
       message("Upload finished.")
       break
-    } else if (poll_for_status == 100) {
-      stop("Polling for upload status verification has timed out. Check upload response and/or increase poll limit.")
+    } else if (poll_for_status == status_checks) {
+      stop("Polling for upload status verification has timed out. Check upload 
+           response and/or increase poll limit.")
     } else {
       message("Polling for upload and data validation status. Stay tuned.")
-      upload_data_response <- httr::GET(paste0(domain,upload_data_response$links$show),
-                                        httr::authenticate(email, password, type = "basic"))
+      upload_data_response <- httr::GET(paste0(domain,
+                                               upload_data_response$links$show),
+                                        httr::authenticate(email, password, 
+                                                           type = "basic"))
       
       httr::stop_for_status(upload_data_response)
       
-      upload_data_response <- jsonlite::fromJSON(httr::content(upload_data_response,as = "text",type = "application/json", encoding = "utf-8"))
+      upload_data_response <- jsonlite::fromJSON(httr::content(upload_data_response,
+                                                               as = "text",
+                                                               type = "application/json", 
+                                                               encoding = "utf-8"))
       
       Sys.sleep(1)
       
@@ -300,10 +409,15 @@ update_socrata <- function(dataset_id,
                            email, 
                            password) {
   
-  open_revision_socrata <- open_revision(dataset_id, action_type, domain, email, password)
-  create_source_socrata <- create_source(open_revision_socrata, filepath_to_data, source_type, source_parse, domain, email, password)
-  upload_to_source_socrata <- upload_to_source(create_source_socrata, filepath_to_data, domain, email, password)
-  apply_revision_socrata <- apply_revision(open_revision_socrata, domain, email, password)
-  return(apply_revision_socrata)
+  if(validate_source(filepath_to_data)) {
+  
+    open_revision_socrata <- open_revision(dataset_id, action_type, domain, email, password)
+    create_source_socrata <- create_source(open_revision_socrata, source_type, source_parse, domain, email, password)
+    upload_to_source_socrata <- upload_to_source(create_source_socrata, filepath_to_data, domain, email, password)
+    apply_revision_socrata <- apply_revision(open_revision_socrata, domain, email, password)
+    return(apply_revision_socrata)
+  } else {
+    stop("The data source does not appear to be a data.frame or filepath to a csv")
+  }
 }
 
