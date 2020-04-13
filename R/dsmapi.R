@@ -215,38 +215,13 @@ create_source <- function(revision_response_object,
 #' }
 #' @importFrom httr POST GET add_headers authenticate user_agent content upload_file stop_for_status
 #' @importFrom jsonlite fromJSON
+#' @importFrom data.table fwrite
 #'
 #' @export
 upload_to_source <- function(create_source_response_object, filepath_to_data, 
                              domain, email, password, status_checks = 100) {
   
   upload_data_url <- paste0('https://', domain, create_source_response_object$links$bytes)
-  
-  ## Is the data a data frame or a filepath?
-  # if(exists(deparse(substitute(filepath_to_data)))) {
-  #   
-  #   if(inherits(filepath_to_data, "data.frame")){
-  #     data_for_upload <- serialize(filepath_to_data, connection = NULL, ascii = FALSE)
-  #     ## is there something needed here for chunking/handling large data.frames?
-  #     
-  #     upload_headers <- httr::add_headers("Content-Type" = "application/octet-stream")
-  #     
-  #   } else if((file.access(filepath_to_data, mode = 4)) == 0) {
-  #     if(regexpr(".*\\.csv$", filepath_to_data) == 0) {
-  #       data_for_upload <- httr::upload_file(filepath_to_data)
-  #       upload_headers <- httr::add_headers("Content-Type" = "text/csv")
-  #       
-  #     } else if(regexpr(".*\\.csv$", filepath_to_data) == -1) {
-  #       stop(filepath_to_data, " does not appear to be a csv file.")
-  #     } 
-  #   } else if((file.access(filepath_to_data, mode = 4)) == -1) {
-  #     stop("The file ", filepath_to_data, " does not appear to exist or be accessible")
-  #   } else if(!inherits(filepath_to_data, "data.frame")) {
-  #     stop("The R object ", filepath_to_data, " does not appear to be a data.frame")
-  #   }
-  # } else if(!exists(deparse(substitute(filepath_to_data)))) {
-  #   stop(filepath_to_data, " does not appear to exist?")
-  # }
   
   if(!is.data.frame(filepath_to_data) & !is.character(filepath_to_data)) {
     stop(filepath_to_data, " does not appear to be a data.frame or filepath")
